@@ -52,6 +52,7 @@ let countdownValue = 5;
 let formulaOpen = false;
 let predFormulaOpen = false;
 let newsRotationIndex = 0;
+let technicalData = {}; // Per-ticker technical analysis cache
 
 // ========================
 // PREDICTION DATA (Real analyst/news data — April 3, 2026)
@@ -219,6 +220,322 @@ const NEWS_ITEMS = [
     { time: '3:15 AM', headline: 'Exxon COO: "Onshore assets well-insulated from Middle East supply disruption"', source: 'Fool.com', sentiment: 'bullish', tickers: ['XOM'] },
     { time: '3:00 AM', headline: 'Citigroup raises Exxon (XOM) target to $175 citing "structural re-engagement"', source: 'TipRanks', sentiment: 'bullish', tickers: ['XOM'] },
 ];
+
+// ========================
+// TECHNICAL ANALYSIS ENGINE
+// ========================
+
+// Trend profiles per stock to make the generated data match real behavior
+const TREND_PROFILES = {
+    CVX:  { trend: 'bullish',  volatility: 0.018, recentBoost: 0.08 },  // oil surge
+    NVDA: { trend: 'volatile', volatility: 0.032, recentBoost: -0.05 }, // pulled back from highs
+    XOM:  { trend: 'bullish',  volatility: 0.020, recentBoost: 0.06 },  // oil surge
+    WMT:  { trend: 'steady',   volatility: 0.010, recentBoost: 0.02 },  // defensive steady
+    PG:   { trend: 'steady',   volatility: 0.009, recentBoost: 0.01 },  // defensive steady
+    TSLA: { trend: 'bearish',  volatility: 0.035, recentBoost: -0.12 }, // delivery miss selloff
+};
+
+function generateHistoricalPrices(currentPrice, numDays, profile) {
+    const prices = [];
+    const volumes = [];
+    // Work backwards from current price
+    let price = currentPrice;
+    const data = [];
+
+    // Generate forward from a starting price, then reverse
+    const trendMultiplier = profile.trend === 'bullish' ? 0.0008 :
+                            profile.trend === 'bearish' ? -0.0006 : 0.0002;
+
+    // Start price is current minus accumulated trend/boost
+    let startPrice = currentPrice / (1 + profile.recentBoost + trendMultiplier * numDays);
+
+    price = startPrice;
+    for (let i = 0; i < numDays; i++) {
+        const dayProgress = i / numDays;
+        // Add trend, noise, and recent acceleration
+        const noise = (Math.random() - 0.5) * 2 * profile.volatility * price;
+        const trend = trendMultiplier * price;
+        // Recent boost accelerates in last 20% of data
+        const boost = dayProgress > 0.8 ? (profile.recentBoost / (numDays * 0.2)) * price : 0;
+        price = price + trend + noise + boost;
+        price = Math.max(price, currentPrice * 0.5); // floor
+
+        const open = price * (1 + (Math.random() - 0.5) * 0.005);
+        const close = price;
+        const high = Math.max(open, close) * (1 + Math.random() * 0.01);
+        const low = Math.min(open, close) * (1 - Math.random() * 0.01);
+        const vol = Math.floor(5_000_000 + Math.random() * 15_000_000);
+
+        data.push({ open: round2(open), high: round2(high), low: round2(low), close: round2(close), volume: vol });
+    }
+
+    // Adjust last close to match current price
+    data[data.length - 1].close = currentPrice;
+    data[data.length - 1].high = Math.max(data[data.length - 1].high, currentPrice);
+
+    return data;
+}
+
+// Simple Moving Average
+function calcSMA(closes, period) {
+    const sma = [];
+    for (let i = 0; i < closes.length; i++) {
+        if (i < period - 1) { sma.push(null); continue; }
+        let sum = 0;
+        for (let j = i - period + 1; j <= i; j++) sum += closes[j];
+        sma.push(round2(sum / period));
+    }
+    return sma;
+}
+
+// Exponential Moving Average
+function calcEMA(closes, period) {
+    const ema = [];
+    const k = 2 / (period + 1);
+    let prev = null;
+    for (let i = 0; i < closes.length; i++) {
+        if (i < period - 1) { ema.push(null); continue; }
+        if (prev === null) {
+            // First EMA = SMA
+            let sum = 0;
+            for (let j = i - period + 1; j <= i; j++) sum += closes[j];
+            prev = sum / period;
+        } else {
+            prev = closes[i] * k + prev * (1 - k);
+        }
+        ema.push(round2(prev));
+    }
+    return ema;
+}
+
+// RSI (Relative Strength Index)
+function calcRSI(closes, period = 14) {
+    const rsi = [];
+    let avgGain = 0, avgLoss = 0;
+
+    for (let i = 0; i < closes.length; i++) {
+        if (i === 0) { rsi.push(null); continue; }
+        const change = closes[i] - closes[i - 1];
+        const gain = change > 0 ? change : 0;
+        const loss = change < 0 ? -change : 0;
+
+        if (i <= period) {
+            avgGain += gain;
+            avgLoss += loss;
+            if (i === period) {
+                avgGain /= period;
+                avgLoss /= period;
+                const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+                rsi.push(round2(100 - 100 / (1 + rs)));
+            } else {
+                rsi.push(null);
+            }
+        } else {
+            avgGain = (avgGain * (period - 1) + gain) / period;
+            avgLoss = (avgLoss * (period - 1) + loss) / period;
+            const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+            rsi.push(round2(100 - 100 / (1 + rs)));
+        }
+    }
+    return rsi;
+}
+
+// MACD (Moving Average Convergence Divergence)
+function calcMACD(closes) {
+    const ema12 = calcEMA(closes, 12);
+    const ema26 = calcEMA(closes, 26);
+    const macdLine = [];
+    for (let i = 0; i < closes.length; i++) {
+        if (ema12[i] === null || ema26[i] === null) { macdLine.push(null); continue; }
+        macdLine.push(round2(ema12[i] - ema26[i]));
+    }
+    // Signal line = 9-period EMA of MACD line
+    const validMACD = macdLine.filter(v => v !== null);
+    const signalRaw = calcEMA(validMACD, 9);
+    // Align signal with full length
+    const signal = [];
+    let si = 0;
+    for (let i = 0; i < macdLine.length; i++) {
+        if (macdLine[i] === null) { signal.push(null); continue; }
+        signal.push(signalRaw[si] !== undefined ? signalRaw[si] : null);
+        si++;
+    }
+    // Histogram
+    const histogram = [];
+    for (let i = 0; i < macdLine.length; i++) {
+        if (macdLine[i] === null || signal[i] === null) { histogram.push(null); continue; }
+        histogram.push(round2(macdLine[i] - signal[i]));
+    }
+    return { macdLine, signal, histogram };
+}
+
+// Bollinger Bands
+function calcBollingerBands(closes, period = 20, stdDevMultiplier = 2) {
+    const sma = calcSMA(closes, period);
+    const upper = [], lower = [];
+    for (let i = 0; i < closes.length; i++) {
+        if (sma[i] === null) { upper.push(null); lower.push(null); continue; }
+        let variance = 0;
+        for (let j = i - period + 1; j <= i; j++) {
+            variance += Math.pow(closes[j] - sma[i], 2);
+        }
+        const stdDev = Math.sqrt(variance / period);
+        upper.push(round2(sma[i] + stdDevMultiplier * stdDev));
+        lower.push(round2(sma[i] - stdDevMultiplier * stdDev));
+    }
+    return { middle: sma, upper, lower };
+}
+
+// Stochastic Oscillator (%K, %D)
+function calcStochastic(data, kPeriod = 14, dPeriod = 3) {
+    const kValues = [];
+    for (let i = 0; i < data.length; i++) {
+        if (i < kPeriod - 1) { kValues.push(null); continue; }
+        let highestHigh = -Infinity, lowestLow = Infinity;
+        for (let j = i - kPeriod + 1; j <= i; j++) {
+            highestHigh = Math.max(highestHigh, data[j].high);
+            lowestLow = Math.min(lowestLow, data[j].low);
+        }
+        const range = highestHigh - lowestLow;
+        const k = range === 0 ? 50 : ((data[i].close - lowestLow) / range) * 100;
+        kValues.push(round2(k));
+    }
+    const dValues = calcSMA(kValues.map(v => v === null ? 50 : v), dPeriod);
+    return { k: kValues, d: dValues };
+}
+
+// Fibonacci Retracement Levels
+function calcFibonacci(data) {
+    const closes = data.map(d => d.close);
+    const high = Math.max(...data.map(d => d.high));
+    const low = Math.min(...data.map(d => d.low));
+    const diff = high - low;
+    return {
+        level0: round2(high),                    // 0%
+        level236: round2(high - diff * 0.236),    // 23.6%
+        level382: round2(high - diff * 0.382),    // 38.2%
+        level500: round2(high - diff * 0.500),    // 50%
+        level618: round2(high - diff * 0.618),    // 61.8%
+        level786: round2(high - diff * 0.786),    // 78.6%
+        level100: round2(low),                    // 100%
+        currentVsLevels: closes[closes.length - 1],
+    };
+}
+
+// Volume Profile (bucketed)
+function calcVolumeProfile(data, buckets = 12) {
+    const allPrices = data.map(d => d.close);
+    const min = Math.min(...allPrices);
+    const max = Math.max(...allPrices);
+    const range = max - min;
+    const bucketSize = range / buckets;
+    const profile = Array(buckets).fill(0);
+    const labels = [];
+
+    for (let i = 0; i < buckets; i++) {
+        labels.push(round2(min + bucketSize * i + bucketSize / 2));
+    }
+
+    data.forEach(d => {
+        const idx = Math.min(Math.floor((d.close - min) / bucketSize), buckets - 1);
+        profile[idx] += d.volume;
+    });
+
+    // Point of Control (POC) = price level with highest volume
+    const maxVolIdx = profile.indexOf(Math.max(...profile));
+    return { profile, labels, poc: labels[maxVolIdx], maxVol: Math.max(...profile) };
+}
+
+// Run full technical analysis for a prediction
+function runTechnicalAnalysis(pred) {
+    const profile = TREND_PROFILES[pred.ticker] || { trend: 'steady', volatility: 0.015, recentBoost: 0 };
+    const data = generateHistoricalPrices(pred.currentPrice, 90, profile);
+    const closes = data.map(d => d.close);
+
+    const sma20 = calcSMA(closes, 20);
+    const sma50 = calcSMA(closes, 50);
+    const ema12 = calcEMA(closes, 12);
+    const ema26 = calcEMA(closes, 26);
+    const rsi = calcRSI(closes, 14);
+    const macd = calcMACD(closes);
+    const bollinger = calcBollingerBands(closes, 20, 2);
+    const stochastic = calcStochastic(data, 14, 3);
+    const fibonacci = calcFibonacci(data);
+    const volumeProfile = calcVolumeProfile(data);
+
+    // Latest values
+    const last = closes.length - 1;
+    const latestRSI = rsi[last] || 50;
+    const latestMACD = macd.macdLine[last] || 0;
+    const latestSignal = macd.signal[last] || 0;
+    const latestHist = macd.histogram[last] || 0;
+    const latestK = stochastic.k[last] || 50;
+    const latestD = stochastic.d[last] || 50;
+    const latestBBUpper = bollinger.upper[last] || closes[last] * 1.02;
+    const latestBBLower = bollinger.lower[last] || closes[last] * 0.98;
+    const latestSMA20 = sma20[last] || closes[last];
+    const latestSMA50 = sma50[last] || closes[last];
+
+    // Generate signals
+    const signals = [];
+
+    // RSI signal
+    if (latestRSI < 30) signals.push({ name: 'RSI', signal: 'Oversold', type: 'bullish', value: latestRSI.toFixed(1) });
+    else if (latestRSI > 70) signals.push({ name: 'RSI', signal: 'Overbought', type: 'bearish', value: latestRSI.toFixed(1) });
+    else if (latestRSI < 45) signals.push({ name: 'RSI', signal: 'Neutral-Low', type: 'neutral', value: latestRSI.toFixed(1) });
+    else if (latestRSI > 55) signals.push({ name: 'RSI', signal: 'Bullish Zone', type: 'bullish', value: latestRSI.toFixed(1) });
+    else signals.push({ name: 'RSI', signal: 'Neutral', type: 'neutral', value: latestRSI.toFixed(1) });
+
+    // MACD signal
+    if (latestMACD > latestSignal && latestHist > 0) signals.push({ name: 'MACD', signal: 'Bullish Cross', type: 'bullish', value: latestMACD.toFixed(2) });
+    else if (latestMACD < latestSignal && latestHist < 0) signals.push({ name: 'MACD', signal: 'Bearish Cross', type: 'bearish', value: latestMACD.toFixed(2) });
+    else signals.push({ name: 'MACD', signal: 'Converging', type: 'neutral', value: latestMACD.toFixed(2) });
+
+    // Bollinger Bands
+    const bbPosition = (closes[last] - latestBBLower) / (latestBBUpper - latestBBLower);
+    if (bbPosition < 0.1) signals.push({ name: 'Bollinger', signal: 'Near Lower Band', type: 'bullish', value: (bbPosition * 100).toFixed(0) + '%' });
+    else if (bbPosition > 0.9) signals.push({ name: 'Bollinger', signal: 'Near Upper Band', type: 'bearish', value: (bbPosition * 100).toFixed(0) + '%' });
+    else signals.push({ name: 'Bollinger', signal: 'Mid-Band', type: 'neutral', value: (bbPosition * 100).toFixed(0) + '%' });
+
+    // Moving Average Cross
+    if (closes[last] > latestSMA20 && latestSMA20 > latestSMA50) signals.push({ name: 'MA Cross', signal: 'Golden Cross', type: 'bullish', value: 'SMA20>50' });
+    else if (closes[last] < latestSMA20 && latestSMA20 < latestSMA50) signals.push({ name: 'MA Cross', signal: 'Death Cross', type: 'bearish', value: 'SMA20<50' });
+    else signals.push({ name: 'MA Cross', signal: 'Mixed', type: 'neutral', value: '—' });
+
+    // Stochastic
+    if (latestK < 20 && latestD < 20) signals.push({ name: 'Stochastic', signal: 'Oversold', type: 'bullish', value: `K:${latestK.toFixed(0)}` });
+    else if (latestK > 80 && latestD > 80) signals.push({ name: 'Stochastic', signal: 'Overbought', type: 'bearish', value: `K:${latestK.toFixed(0)}` });
+    else if (latestK > latestD) signals.push({ name: 'Stochastic', signal: 'Bullish', type: 'bullish', value: `K:${latestK.toFixed(0)}` });
+    else signals.push({ name: 'Stochastic', signal: latestK < latestD ? 'Bearish' : 'Neutral', type: latestK < latestD ? 'bearish' : 'neutral', value: `K:${latestK.toFixed(0)}` });
+
+    // Fibonacci
+    const fibSignal = closes[last] > fibonacci.level382 ? 'Above 38.2%' : 'Below 38.2%';
+    const fibType = closes[last] > fibonacci.level500 ? 'bullish' : closes[last] > fibonacci.level618 ? 'neutral' : 'bearish';
+    signals.push({ name: 'Fibonacci', signal: fibSignal, type: fibType, value: `$${closes[last].toFixed(0)}` });
+
+    // Volume Profile
+    const vpSignal = closes[last] > volumeProfile.poc ? 'Above POC' : 'Below POC';
+    const vpType = closes[last] > volumeProfile.poc ? 'bullish' : 'bearish';
+    signals.push({ name: 'Vol Profile', signal: vpSignal, type: vpType, value: `POC:$${volumeProfile.poc.toFixed(0)}` });
+
+    // Overall technical score: percentage of bullish signals
+    const bullishCount = signals.filter(s => s.type === 'bullish').length;
+    const bearishCount = signals.filter(s => s.type === 'bearish').length;
+    const techScore = round2((bullishCount / signals.length) * 100);
+    const overallSignal = bullishCount > bearishCount ? 'Bullish' : bearishCount > bullishCount ? 'Bearish' : 'Neutral';
+
+    return {
+        data, closes, sma20, sma50, ema12, ema26, rsi, macd, bollinger, stochastic, fibonacci, volumeProfile,
+        signals, techScore, overallSignal,
+        latest: { rsi: latestRSI, macd: latestMACD, signal: latestSignal, histogram: latestHist, k: latestK, d: latestD, sma20: latestSMA20, sma50: latestSMA50 }
+    };
+}
+
+function initTechnicalData() {
+    PREDICTIONS.forEach(pred => {
+        technicalData[pred.ticker] = runTechnicalAnalysis(pred);
+    });
+}
 
 // ========================
 // INITIALIZATION
@@ -774,6 +1091,7 @@ function renderPredictions() {
     });
 
     PREDICTIONS.forEach((pred, idx) => {
+        const tech = technicalData[pred.ticker];
         const card = document.createElement('div');
         card.className = `prediction-card ${pred.topPick ? 'top-pick' : ''}`;
         card.id = `pred-card-${pred.ticker}`;
@@ -783,6 +1101,14 @@ function renderPredictions() {
         ).join('');
 
         const isPosUpside = !pred.upside.startsWith('-');
+
+        // Technical signal badges
+        const signalBadgesHtml = tech ? tech.signals.map(s =>
+            `<span class="tech-signal-badge ${s.type}" title="${s.name}: ${s.value}">${s.name}: ${s.signal}</span>`
+        ).join('') : '';
+
+        const overallClass = tech ? (tech.overallSignal === 'Bullish' ? 'bullish' : tech.overallSignal === 'Bearish' ? 'bearish' : 'neutral') : 'neutral';
+        const techScoreDisplay = tech ? tech.techScore.toFixed(0) : '--';
 
         card.innerHTML = `
             <div class="pred-card-header">
@@ -795,6 +1121,50 @@ function renderPredictions() {
                     <span class="buy-score-label">Buy Score</span>
                 </div>
             </div>
+
+            <!-- Technical Chart -->
+            <div class="tech-chart-wrap">
+                <canvas id="tech-chart-${pred.ticker}" width="440" height="220"></canvas>
+                <div class="chart-legend">
+                    <span class="legend-item"><span class="legend-dot" style="background:#3b82f6"></span>Price</span>
+                    <span class="legend-item"><span class="legend-dot" style="background:#f59e0b"></span>SMA 20</span>
+                    <span class="legend-item"><span class="legend-dot" style="background:#a855f7"></span>SMA 50</span>
+                    <span class="legend-item"><span class="legend-dot" style="background:rgba(59,130,246,0.15)"></span>Bollinger</span>
+                </div>
+            </div>
+
+            <!-- Technical Indicators Summary -->
+            <div class="tech-indicators-bar">
+                <div class="tech-overall ${overallClass}">
+                    <span class="tech-overall-label">Technical</span>
+                    <span class="tech-overall-value">${tech ? tech.overallSignal : 'N/A'}</span>
+                    <span class="tech-overall-score">${techScoreDisplay}% Bullish</span>
+                </div>
+                <div class="tech-mini-indicators">
+                    <div class="tech-mini" title="Relative Strength Index">
+                        <span class="tech-mini-label">RSI</span>
+                        <span class="tech-mini-value">${tech ? tech.latest.rsi.toFixed(1) : '--'}</span>
+                    </div>
+                    <div class="tech-mini" title="MACD">
+                        <span class="tech-mini-label">MACD</span>
+                        <span class="tech-mini-value">${tech ? tech.latest.macd.toFixed(2) : '--'}</span>
+                    </div>
+                    <div class="tech-mini" title="Stochastic %K">
+                        <span class="tech-mini-label">Stoch</span>
+                        <span class="tech-mini-value">${tech ? tech.latest.k.toFixed(0) : '--'}</span>
+                    </div>
+                    <div class="tech-mini" title="SMA 20">
+                        <span class="tech-mini-label">SMA20</span>
+                        <span class="tech-mini-value">$${tech ? tech.latest.sma20.toFixed(0) : '--'}</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Signal Badges -->
+            <div class="tech-signals-row">
+                ${signalBadgesHtml}
+            </div>
+
             <div class="pred-card-details">
                 <div class="pred-detail-row">
                     <span class="pred-detail-label">Current Price</span>
@@ -812,6 +1182,14 @@ function renderPredictions() {
                     <span class="pred-detail-label">Consensus</span>
                     <span class="pred-detail-value">${pred.analystConsensus}</span>
                 </div>
+                <div class="pred-detail-row">
+                    <span class="pred-detail-label">Fib Support</span>
+                    <span class="pred-detail-value">$${tech ? tech.fibonacci.level618.toFixed(2) : '--'}</span>
+                </div>
+                <div class="pred-detail-row">
+                    <span class="pred-detail-label">Vol POC</span>
+                    <span class="pred-detail-value">$${tech ? tech.volumeProfile.poc.toFixed(2) : '--'}</span>
+                </div>
             </div>
             <div class="pred-catalyst">
                 <strong>Catalyst: </strong>${pred.catalyst}
@@ -823,6 +1201,187 @@ function renderPredictions() {
 
         container.appendChild(card);
     });
+
+    // Draw all technical charts after DOM is ready
+    requestAnimationFrame(() => {
+        PREDICTIONS.forEach(pred => {
+            const tech = technicalData[pred.ticker];
+            if (tech) drawTechnicalChart(pred.ticker, tech);
+        });
+    });
+}
+
+// ========================
+// TECHNICAL CHART DRAWING
+// ========================
+
+function drawTechnicalChart(ticker, tech) {
+    const canvas = document.getElementById(`tech-chart-${ticker}`);
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const w = 440, h = 220;
+
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
+    ctx.scale(dpr, dpr);
+
+    const closes = tech.closes;
+    const pad = { top: 14, right: 12, bottom: 50, left: 50 };
+    const chartW = w - pad.left - pad.right;
+    const chartH = h - pad.top - pad.bottom;
+
+    // Price range
+    const allVals = [...closes];
+    tech.bollinger.upper.forEach(v => { if (v !== null) allVals.push(v); });
+    tech.bollinger.lower.forEach(v => { if (v !== null) allVals.push(v); });
+    const minP = Math.min(...allVals) * 0.998;
+    const maxP = Math.max(...allVals) * 1.002;
+    const rangeP = maxP - minP || 1;
+
+    const xScale = (i) => pad.left + (i / (closes.length - 1)) * chartW;
+    const yScale = (v) => pad.top + (1 - (v - minP) / rangeP) * chartH;
+
+    ctx.clearRect(0, 0, w, h);
+
+    // Background grid
+    ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+        const y = pad.top + (chartH / 4) * i;
+        ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(w - pad.right, y); ctx.stroke();
+        // Price label
+        const priceLabel = (maxP - (rangeP / 4) * i).toFixed(0);
+        ctx.fillStyle = 'rgba(255,255,255,0.3)';
+        ctx.font = '9px Inter, sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText('$' + priceLabel, pad.left - 6, y + 3);
+    }
+
+    // Bollinger Bands fill
+    ctx.beginPath();
+    let started = false;
+    for (let i = 0; i < closes.length; i++) {
+        if (tech.bollinger.upper[i] === null) continue;
+        const x = xScale(i);
+        if (!started) { ctx.moveTo(x, yScale(tech.bollinger.upper[i])); started = true; }
+        else ctx.lineTo(x, yScale(tech.bollinger.upper[i]));
+    }
+    for (let i = closes.length - 1; i >= 0; i--) {
+        if (tech.bollinger.lower[i] === null) continue;
+        ctx.lineTo(xScale(i), yScale(tech.bollinger.lower[i]));
+    }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(59, 130, 246, 0.06)';
+    ctx.fill();
+
+    // Bollinger upper/lower lines
+    drawIndicatorLine(ctx, tech.bollinger.upper, xScale, yScale, 'rgba(59,130,246,0.2)', 1);
+    drawIndicatorLine(ctx, tech.bollinger.lower, xScale, yScale, 'rgba(59,130,246,0.2)', 1);
+
+    // SMA 50 (purple)
+    drawIndicatorLine(ctx, tech.sma50, xScale, yScale, '#a855f7', 1.2);
+
+    // SMA 20 (amber)
+    drawIndicatorLine(ctx, tech.sma20, xScale, yScale, '#f59e0b', 1.2);
+
+    // Price line (blue)
+    const isUp = closes[closes.length - 1] >= closes[0];
+    const priceColor = isUp ? '#22c55e' : '#ef4444';
+
+    // Price fill gradient
+    const grad = ctx.createLinearGradient(0, pad.top, 0, pad.top + chartH);
+    grad.addColorStop(0, isUp ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.beginPath();
+    closes.forEach((v, i) => { const x = xScale(i), y = yScale(v); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
+    ctx.lineTo(xScale(closes.length - 1), pad.top + chartH);
+    ctx.lineTo(xScale(0), pad.top + chartH);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Price line
+    ctx.beginPath();
+    closes.forEach((v, i) => { const x = xScale(i), y = yScale(v); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
+    ctx.strokeStyle = priceColor;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+
+    // Current price dot + glow
+    const lastX = xScale(closes.length - 1), lastY = yScale(closes[closes.length - 1]);
+    ctx.beginPath(); ctx.arc(lastX, lastY, 6, 0, Math.PI * 2);
+    ctx.fillStyle = isUp ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
+    ctx.fillStyle = priceColor; ctx.fill();
+
+    // Fibonacci levels (dashed lines)
+    const fib = tech.fibonacci;
+    const fibLevels = [
+        { val: fib.level236, label: '23.6%', color: 'rgba(34,197,94,0.3)' },
+        { val: fib.level382, label: '38.2%', color: 'rgba(245,158,11,0.3)' },
+        { val: fib.level500, label: '50%',   color: 'rgba(168,85,247,0.35)' },
+        { val: fib.level618, label: '61.8%', color: 'rgba(239,68,68,0.3)' },
+    ];
+    fibLevels.forEach(fl => {
+        if (fl.val < minP || fl.val > maxP) return;
+        const fy = yScale(fl.val);
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath(); ctx.moveTo(pad.left, fy); ctx.lineTo(w - pad.right, fy); ctx.strokeStyle = fl.color; ctx.lineWidth = 1; ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = fl.color; ctx.font = '8px JetBrains Mono, monospace'; ctx.textAlign = 'left';
+        ctx.fillText(`Fib ${fl.label}`, w - pad.right - 50, fy - 3);
+    });
+
+    // RSI mini chart (bottom area)
+    const rsiH = 30;
+    const rsiTop = h - pad.bottom + 8;
+    // RSI background
+    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+    ctx.fillRect(pad.left, rsiTop, chartW, rsiH);
+    // RSI overbought/oversold zones
+    ctx.fillStyle = 'rgba(239,68,68,0.06)';
+    ctx.fillRect(pad.left, rsiTop, chartW, rsiH * 0.3);
+    ctx.fillStyle = 'rgba(34,197,94,0.06)';
+    ctx.fillRect(pad.left, rsiTop + rsiH * 0.7, chartW, rsiH * 0.3);
+    // RSI 70/30 lines
+    ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(pad.left, rsiTop + rsiH * 0.3); ctx.lineTo(w - pad.right, rsiTop + rsiH * 0.3); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(pad.left, rsiTop + rsiH * 0.7); ctx.lineTo(w - pad.right, rsiTop + rsiH * 0.7); ctx.stroke();
+    // RSI line
+    ctx.beginPath();
+    let rsiStarted = false;
+    tech.rsi.forEach((v, i) => {
+        if (v === null) return;
+        const x = xScale(i);
+        const y = rsiTop + (1 - v / 100) * rsiH;
+        if (!rsiStarted) { ctx.moveTo(x, y); rsiStarted = true; }
+        else ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = '#8b5cf6'; ctx.lineWidth = 1.2; ctx.stroke();
+    // RSI label
+    ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.font = '8px Inter, sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText('RSI', pad.left + 4, rsiTop + 10);
+    ctx.fillText('70', pad.left + 4, rsiTop + rsiH * 0.3 + 8);
+    ctx.fillText('30', pad.left + 4, rsiTop + rsiH * 0.7 + 8);
+}
+
+function drawIndicatorLine(ctx, values, xScale, yScale, color, lineWidth) {
+    ctx.beginPath();
+    let started = false;
+    values.forEach((v, i) => {
+        if (v === null) return;
+        const x = xScale(i), y = yScale(v);
+        if (!started) { ctx.moveTo(x, y); started = true; }
+        else ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
 }
 
 function renderNewsFeed() {
@@ -967,6 +1526,7 @@ function startUpdateLoop() {
 
 document.addEventListener('DOMContentLoaded', () => {
     initStockState();
+    initTechnicalData();
     setupEventListeners();
 
     // Initial render
