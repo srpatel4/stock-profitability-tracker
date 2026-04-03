@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StockPulse — Daily Profit Tracker</title>
+    <meta name="description" content="Real-time stock profitability tracker showing the most profitable stocks of the day with advanced scoring algorithms.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Ambient Background -->
+    <div class="ambient-bg">
+        <div class="ambient-orb ambient-orb-1"></div>
+        <div class="ambient-orb ambient-orb-2"></div>
+        <div class="ambient-orb ambient-orb-3"></div>
+    </div>
+
+    <!-- Header -->
+    <header id="app-header">
+        <div class="header-inner">
+            <div class="logo-group">
+                <div class="logo-icon">
+                    <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                        <path d="M4 20L10 14L14 18L24 8" stroke="url(#logo-grad)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M18 8H24V14" stroke="url(#logo-grad)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        <defs>
+                            <linearGradient id="logo-grad" x1="4" y1="20" x2="24" y2="8">
+                                <stop stop-color="#00F0FF"/>
+                                <stop offset="1" stop-color="#7B61FF"/>
+                            </linearGradient>
+                        </defs>
+                    </svg>
+                </div>
+                <h1 class="logo-text">StockPulse</h1>
+                <span class="badge-live" id="live-badge">
+                    <span class="pulse-dot"></span>
+                    LIVE
+                </span>
+            </div>
+            <div class="header-meta">
+                <div class="market-clock" id="market-clock">
+                    <span class="clock-label">Market</span>
+                    <span class="clock-status" id="market-status">●</span>
+                    <span class="clock-time" id="clock-time">--:--:--</span>
+                </div>
+                <div class="last-updated" id="last-updated">
+                    Updated: --
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main id="app-main">
+
+        <!-- Market Summary Bar -->
+        <section class="market-summary" id="market-summary">
+            <div class="summary-card" id="summary-sp500">
+                <span class="summary-label">S&P 500</span>
+                <span class="summary-value" id="sp500-value">--</span>
+                <span class="summary-change" id="sp500-change">--</span>
+            </div>
+            <div class="summary-card" id="summary-nasdaq">
+                <span class="summary-label">NASDAQ</span>
+                <span class="summary-value" id="nasdaq-value">--</span>
+                <span class="summary-change" id="nasdaq-change">--</span>
+            </div>
+            <div class="summary-card" id="summary-dow">
+                <span class="summary-label">DOW</span>
+                <span class="summary-value" id="dow-value">--</span>
+                <span class="summary-change" id="dow-change">--</span>
+            </div>
+            <div class="summary-card" id="summary-volume">
+                <span class="summary-label">MKT Volume</span>
+                <span class="summary-value" id="vol-value">--</span>
+                <span class="summary-change" id="vol-change">--</span>
+            </div>
+        </section>
+
+        <!-- Morning Predictions Section -->
+        <section class="predictions-section" id="predictions-section">
+            <div class="predictions-header">
+                <div class="predictions-title-group">
+                    <div class="predictions-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                            <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" stroke="url(#star-grad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="url(#star-grad)" fill-opacity="0.1"/>
+                            <defs>
+                                <linearGradient id="star-grad" x1="2" y1="21" x2="22" y2="2">
+                                    <stop stop-color="#f59e0b"/>
+                                    <stop offset="1" stop-color="#f97316"/>
+                                </linearGradient>
+                            </defs>
+                        </svg>
+                    </div>
+                    <div>
+                        <h2>Morning Predictions — What to Buy Today</h2>
+                        <p class="predictions-subtitle">Powered by Wall Street analyst ratings, news sentiment & geopolitical analysis</p>
+                    </div>
+                </div>
+                <div class="predictions-date" id="predictions-date">April 3, 2026</div>
+            </div>
+
+            <!-- Market Context Banner -->
+            <div class="market-context" id="market-context">
+                <div class="context-badge caution">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1l7 14H1L8 1zm0 3.5v5m0 2v1"/></svg>
+                    MARKET CLOSED — Good Friday
+                </div>
+                <p class="context-text">Markets closed today for Good Friday. Predictions below are for <strong>Monday April 6</strong> open. Middle East tensions continue to drive oil prices higher and create volatility across indices. VIX elevated. Non-farm payroll data pending.</p>
+            </div>
+
+            <!-- Top Prediction Cards -->
+            <div class="prediction-cards" id="prediction-cards">
+                <!-- Populated by JS -->
+            </div>
+
+            <!-- News & Analyst Feed -->
+            <div class="news-feed-section">
+                <div class="news-feed-header">
+                    <h3>Live Analyst & News Intelligence</h3>
+                    <span class="news-badge">
+                        <span class="pulse-dot"></span>
+                        Auto-updating
+                    </span>
+                </div>
+                <div class="news-feed" id="news-feed">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- Prediction Formula -->
+            <div class="prediction-formula">
+                <div class="pred-formula-header" id="pred-formula-toggle">
+                    <h3>Prediction Scoring Model</h3>
+                    <button class="formula-toggle" aria-label="Toggle prediction formula">
+                        <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z"/></svg>
+                    </button>
+                </div>
+                <div class="pred-formula-body" id="pred-formula-body">
+                    <code class="formula-code">
+                        BuyScore = (0.30 × AnalystConsensus) + (0.25 × NewsSentiment) + (0.20 × TechnicalMomentum) + (0.15 × SectorTailwinds) + (0.10 × RiskAdjustedUpside)
+                    </code>
+                    <div class="pred-factors">
+                        <div class="pred-factor">
+                            <span class="pred-factor-weight">30%</span>
+                            <div>
+                                <strong>Analyst Consensus</strong>
+                                <p>Wall Street Buy/Hold/Sell ratings, price target upside, and recent upgrade/downgrade activity from firms like Citi, Mizuho, Barclays.</p>
+                            </div>
+                        </div>
+                        <div class="pred-factor">
+                            <span class="pred-factor-weight">25%</span>
+                            <div>
+                                <strong>News Sentiment</strong>
+                                <p>Real-time analysis of financial news, earnings reports, delivery numbers, and breaking headlines from Reuters, Bloomberg, Seeking Alpha.</p>
+                            </div>
+                        </div>
+                        <div class="pred-factor">
+                            <span class="pred-factor-weight">20%</span>
+                            <div>
+                                <strong>Technical Momentum</strong>
+                                <p>Price trend, RSI, moving average crossovers, and volume-weighted momentum indicators.</p>
+                            </div>
+                        </div>
+                        <div class="pred-factor">
+                            <span class="pred-factor-weight">15%</span>
+                            <div>
+                                <strong>Sector Tailwinds</strong>
+                                <p>Macro and geopolitical factors benefiting specific sectors — oil prices boosting energy, AI capex driving semiconductors.</p>
+                            </div>
+                        </div>
+                        <div class="pred-factor">
+                            <span class="pred-factor-weight">10%</span>
+                            <div>
+                                <strong>Risk-Adjusted Upside</strong>
+                                <p>Price target vs. current price ratio minus volatility penalty. Rewards high upside with low risk.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Top Profitable Stock Hero -->
+        <section class="hero-stock" id="hero-stock">
+            <div class="hero-rank-badge">#1 Most Profitable Today</div>
+            <div class="hero-content">
+                <div class="hero-left">
+                    <div class="hero-ticker-row">
+                        <span class="hero-ticker" id="hero-ticker">--</span>
+                        <span class="hero-name" id="hero-name">Loading...</span>
+                    </div>
+                    <div class="hero-price-row">
+                        <span class="hero-price" id="hero-price">$--</span>
+                        <span class="hero-change positive" id="hero-change">+$-- (+--.--%)</span>
+                    </div>
+                    <div class="hero-stats">
+                        <div class="hero-stat">
+                            <span class="stat-label">Profit Score</span>
+                            <span class="stat-value highlight" id="hero-score">--</span>
+                        </div>
+                        <div class="hero-stat">
+                            <span class="stat-label">Volume</span>
+                            <span class="stat-value" id="hero-volume">--</span>
+                        </div>
+                        <div class="hero-stat">
+                            <span class="stat-label">Momentum</span>
+                            <span class="stat-value" id="hero-momentum">--</span>
+                        </div>
+                        <div class="hero-stat">
+                            <span class="stat-label">Volatility</span>
+                            <span class="stat-value" id="hero-volatility">--</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="hero-right">
+                    <canvas id="hero-chart" width="400" height="180"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- Formula Section -->
+        <section class="formula-section" id="formula-section">
+            <div class="formula-header">
+                <h2>Profitability Scoring Formula</h2>
+                <button class="formula-toggle" id="formula-toggle" aria-label="Toggle formula details">
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z"/></svg>
+                </button>
+            </div>
+            <div class="formula-body" id="formula-body">
+                <div class="formula-display">
+                    <code class="formula-code">
+                        ProfitScore = (0.35 × DailyGain%) + (0.25 × VolumeRatio) + (0.20 × MomentumIndex) + (0.10 × VolatilityEdge) + (0.10 × SectorStrength)
+                    </code>
+                </div>
+                <div class="formula-breakdown">
+                    <div class="formula-factor">
+                        <div class="factor-weight">35%</div>
+                        <div class="factor-info">
+                            <h4>Daily Gain %</h4>
+                            <p>Percentage price change from market open. The primary driver of profitability.</p>
+                        </div>
+                    </div>
+                    <div class="formula-factor">
+                        <div class="factor-weight">25%</div>
+                        <div class="factor-info">
+                            <h4>Volume Ratio</h4>
+                            <p>Current volume vs. 20-day average volume. High volume confirms price moves.</p>
+                        </div>
+                    </div>
+                    <div class="formula-factor">
+                        <div class="factor-weight">20%</div>
+                        <div class="factor-info">
+                            <h4>Momentum Index</h4>
+                            <p>Rate of price acceleration. Faster gains indicate stronger momentum.</p>
+                        </div>
+                    </div>
+                    <div class="formula-factor">
+                        <div class="factor-weight">10%</div>
+                        <div class="factor-info">
+                            <h4>Volatility Edge</h4>
+                            <p>Favorable volatility patterns suggesting continued upward movement.</p>
+                        </div>
+                    </div>
+                    <div class="formula-factor">
+                        <div class="factor-weight">10%</div>
+                        <div class="factor-info">
+                            <h4>Sector Strength</h4>
+                            <p>How well the stock's sector is performing relative to overall market.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Controls -->
+        <section class="controls-bar" id="controls-bar">
+            <div class="filter-group">
+                <button class="filter-btn active" data-filter="all" id="filter-all">All Stocks</button>
+                <button class="filter-btn" data-filter="tech" id="filter-tech">Technology</button>
+                <button class="filter-btn" data-filter="health" id="filter-health">Healthcare</button>
+                <button class="filter-btn" data-filter="finance" id="filter-finance">Finance</button>
+                <button class="filter-btn" data-filter="energy" id="filter-energy">Energy</button>
+                <button class="filter-btn" data-filter="consumer" id="filter-consumer">Consumer</button>
+            </div>
+            <div class="sort-group">
+                <label for="sort-select" class="sort-label">Sort by:</label>
+                <select id="sort-select" class="sort-select">
+                    <option value="score">Profit Score</option>
+                    <option value="gain">Daily Gain %</option>
+                    <option value="volume">Volume</option>
+                    <option value="momentum">Momentum</option>
+                    <option value="price">Price</option>
+                </select>
+            </div>
+        </section>
+
+        <!-- Stock Rankings Table -->
+        <section class="rankings-section" id="rankings-section">
+            <div class="rankings-header">
+                <h2>Top 20 Most Profitable Stocks</h2>
+                <span class="update-countdown" id="update-countdown">Next update in --s</span>
+            </div>
+            <div class="rankings-table-wrap">
+                <table class="rankings-table" id="rankings-table">
+                    <thead>
+                        <tr>
+                            <th class="col-rank">#</th>
+                            <th class="col-ticker">Ticker</th>
+                            <th class="col-price">Price</th>
+                            <th class="col-change">Change</th>
+                            <th class="col-gain">Gain %</th>
+                            <th class="col-volume">Volume</th>
+                            <th class="col-momentum">Momentum</th>
+                            <th class="col-score">Profit Score</th>
+                            <th class="col-chart">Intraday</th>
+                        </tr>
+                    </thead>
+                    <tbody id="rankings-body">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Historical Winners -->
+        <section class="history-section" id="history-section">
+            <h2>This Week's Daily Winners</h2>
+            <div class="history-cards" id="history-cards">
+                <!-- Populated by JS -->
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer id="app-footer">
+        <p>StockPulse — Real-time profitability tracking engine. Data is simulated for demonstration purposes.</p>
+        <p class="footer-sub">Profitability scores are calculated using a proprietary multi-factor algorithm.</p>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>
